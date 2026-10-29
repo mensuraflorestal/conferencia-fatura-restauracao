@@ -1,0 +1,23 @@
+# Ambiente Virtual
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Arquivos de ambiente e senhas
+.env
+
+# Arquivos de exportação e dados locais
+exports_sgf/*
+!exports_sgf/.gitkeep
+
+# Relatório consolidado gerado
+Consolidado_Manual_Selecionado.xlsx
+
+# Arquivos temporários do Excel
+~$*
+
+# Logs e depuração
+debug_screenshots/
+*.log
