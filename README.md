@@ -58,3 +58,4 @@ Ou rodar diretamente no terminal:
 ```cmd
 python extract.py
 ```
+

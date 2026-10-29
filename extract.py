@@ -72,6 +72,12 @@ def adicionar_total(df, cols_texto):
     dict_total[cols_texto[-1]] = "TOTAL"
     dict_total["Custo Total (R$)"] = df["Custo Total (R$)"].sum()
     dict_total["Qtd Produção/Horas"] = df["Qtd Produção/Horas"].sum()
+    if "Valor Unitário (R$)" in df.columns:
+        tot_prod = dict_total["Qtd Produção/Horas"]
+        tot_custo = dict_total["Custo Total (R$)"]
+        dict_total["Valor Unitário (R$)"] = (
+            round(tot_custo / tot_prod, 2) if tot_prod > 0 else 0.0
+        )
     linha = pd.DataFrame([dict_total])
     return pd.concat([df, linha], ignore_index=True)
 
@@ -355,12 +361,18 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
         "Município",
     )
 
+    col_operacao = next(
+        (c for c in colunas if "oper" in str(c).lower() and "desc" in str(c).lower()),
+        next((c for c in colunas if "oper" in str(c).lower()), "Operação"),
+    )
+
     for col in [
         col_os,
         "ID Projeto",
         "Nome Projeto",
         col_talhao,
         col_municipio,
+        col_operacao,
     ]:
         if col not in df.columns:
             df[col] = "Não Informado"
@@ -372,10 +384,52 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
         "Nome Projeto",
         col_talhao,
         col_municipio,
+        col_operacao,
     ]:
         df[col] = df[col].fillna("Não Informado")
 
-    # 1. Por Horto
+    # 1. Visão por Horto (Identificador: Horto / Sem OS, com Valor Unitário)
+    df_horto_sem_os = (
+        df.groupby(
+            ["Mês Fatura", "ID Projeto", "Nome Projeto", col_operacao],
+            dropna=False,
+            as_index=False,
+        )
+        .agg({"Custo_Num": "sum", "Prod_Num": "sum"})
+        .rename(
+            columns={
+                "Custo_Num": "Custo Total (R$)",
+                "Prod_Num": "Qtd Produção/Horas",
+                col_operacao: "Operação",
+            }
+        )
+    )
+    df_horto_sem_os["Valor Unitário (R$)"] = df_horto_sem_os.apply(
+        lambda r: round(r["Custo Total (R$)"] / r["Qtd Produção/Horas"], 2)
+        if r["Qtd Produção/Horas"] > 0
+        else 0.0,
+        axis=1,
+    )
+    cols_ordem_horto = [
+        "Mês Fatura",
+        "ID Projeto",
+        "Nome Projeto",
+        "Operação",
+        "Valor Unitário (R$)",
+        "Qtd Produção/Horas",
+        "Custo Total (R$)",
+    ]
+    df_horto_sem_os = df_horto_sem_os[cols_ordem_horto].sort_values(
+        by=["Mês Fatura", "Nome Projeto", "Operação"],
+        ascending=[True, True, True],
+    ).reset_index(drop=True)
+
+    df_horto_sem_os_total = adicionar_total(
+        df_horto_sem_os,
+        ["Mês Fatura", "ID Projeto", "Nome Projeto", "Operação"],
+    )
+
+    # 2. Por Horto (com OS)
     df_horto = (
         df.groupby(
             [col_os, "Mês Fatura", "ID Projeto", "Nome Projeto"],
@@ -401,7 +455,7 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
         ["Ordem de Serviço", "Mês Fatura", "ID Projeto", "Nome Projeto"],
     )
 
-    # 2. Por Horto + Talhão
+    # 3. Por Horto + Talhão
     df_horto_talhao = (
         df.groupby(
             [
@@ -440,7 +494,7 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
         ],
     )
 
-    # 3. Por Município
+    # 4. Por Município
     df_municipio = (
         df.groupby(
             [col_os, "Mês Fatura", col_municipio],
@@ -470,6 +524,9 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
 
     try:
         with pd.ExcelWriter(caminho, engine="openpyxl") as writer:
+            df_horto_sem_os_total.to_excel(
+                writer, sheet_name="Visão por Horto", index=False
+            )
             df_horto_total.to_excel(writer, sheet_name="Por Horto", index=False)
             df_horto_talhao_total.to_excel(
                 writer, sheet_name="Horto + Talhão", index=False
@@ -478,12 +535,20 @@ def exportar_relatorio(df_filtrado, col_os, nome_arquivo):
                 writer, sheet_name="Por Município", index=False
             )
 
-            # Autoajuste de largura de colunas
+            # Autoajuste de largura de colunas e formatação numérica
             for ws in writer.sheets.values():
                 for col in ws.columns:
                     max_len = max(len(str(cell.value or "")) for cell in col)
                     col_letter = col[0].column_letter
                     ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+                for row in ws.iter_rows(min_row=2):
+                    for cell in row:
+                        header = str(ws.cell(row=1, column=cell.column).value or "")
+                        if "R$" in header:
+                            cell.number_format = '"R$" #,##0.00'
+                        elif "Qtd" in header or "Horas" in header:
+                            cell.number_format = '#,##0.00'
 
         print(f"💾 Relatório gerado com sucesso: {caminho.resolve()}")
     except PermissionError:
